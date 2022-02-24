@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using IoC.Controllers;
 using IoC.Models.DependancyInjection;
 using Microsoft.AspNetCore.Mvc;
@@ -55,10 +56,31 @@ namespace IoC.Models
 
             // Register Controllers
             container.Register<Controller, HomeController>(ELifecycleType.TRANSIENT);
+            container.Register<Controller, HomeController>(ELifecycleType.TRANSIENT);
 
         }
 
-        public object CreateController(ControllerContext context) => container.Resolve<Controller>();
+        /// <summary>
+        /// Creates a controller if its registered in the continer.
+        /// </summary>
+        /// <param name="context">Controller Context</param>
+        /// <returns>Controller instance</returns>
+        public object CreateController(ControllerContext context)
+        {
+            // Get name of the controller from the RouteData
+            var controller_name = context.RouteData.Values["controller"].ToString();
+
+            // Get all the controllers implemeting the `Controller` interface
+            var controllers = container.Resolve<Controller>();
+
+            // Loop the found registered controllers and return the first one matching the name
+            if (controllers is List<Controller>)
+                foreach (var controller in (List<Controller>)controllers)
+                    if (controller.GetType().Name.Contains(controller_name)) return controller;
+
+            // Only one registered controller was found, return that
+            return controllers;
+        }
 
         public void ReleaseController(ControllerContext context, object controller)
         {
