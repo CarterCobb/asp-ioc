@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -33,46 +34,66 @@ namespace IoC.Models.DependancyInjection
         /// </summary>
         /// <param name="serviceType">Type to resolve an implementation</param>
         /// <returns>Implementation for serviceType</returns>
-        private object Resolve(Type serviceType)
+        private dynamic Resolve(Type serviceType)
         {
             // Find service maching given type
-            var descriptor = _serviceDescriptors
-                .SingleOrDefault(x => x.ServiceType == serviceType);
+            var descriptors = _serviceDescriptors
+                .Where(x => x.ServiceType == serviceType)
+                .ToList();
 
             // If the type is not found thrown an error
-            if (descriptor == null)
-                throw new Exception($"Service of type {serviceType} is not registered");
+            if (descriptors.Count == 0) throw new Exception($"Service of type {serviceType} is not registered");
 
-            // If there is an implemetation return it
-            if (descriptor.Implementation != null)
-                return descriptor.Implementation;
+            // Create a generic list of the requested type
+            Type list_class = typeof(List<>).MakeGenericType(serviceType);
+            var implementations = (IList)Activator.CreateInstance(list_class);
 
-            // Get the type needed to instantiate
-            var initType = descriptor.ImplementationType;
+            foreach (var descriptor in descriptors) {
+                // If there is an implemetation add to list and break
+                if (descriptor.Implementation != null)
+                {
+                    implementations.Add(descriptor.Implementation);
+                    break;
+                }
 
-            // Throw exception if type is abstract or an interface 
-            if (initType.IsAbstract || initType.IsInterface)
-                throw new Exception($"Cannot instantiate " +
-                    $"{(initType.IsAbstract ? "abstract class." : "interface.")}");
+                // Get the type needed to instantiate
+                var initType = descriptor.ImplementationType;
+                
+                // Throw exception if type is abstract or an interface 
+                if (initType.IsAbstract || initType.IsInterface)
+                    throw new Exception($"Cannot instantiate " +
+                        $"{(initType.IsAbstract ? "abstract class." : "interface.")}");
 
-            // Get the first constructor for the type
-            // This will clash if the type has multiple contrustors :(
-            var contructorInfo = initType.GetConstructors().First();
-            
-            // Use recursion to instantiate contructor parameters
-            var parameters = contructorInfo
-                .GetParameters()
-                .Select(x => Resolve(x.ParameterType))
-                .ToArray();
+                // Get the first constructor for the type
+                // This will clash if the type has multiple contructors :(
+                var contructorInfo = initType.GetConstructors().First();
 
-            // Instatiate type
-            var implementation = Activator.CreateInstance(initType, parameters);
+                // Use recursion to instantiate contructor parameters
+                // This can create a bug if specific instances of a service are needed as the injection will resolve to the first item found
+                var parameters = contructorInfo
+                    .GetParameters()
+                    .Select(x => {
+                        var resolution = Resolve(x.ParameterType);
+                        if (resolution is IList) return (IList)resolution[0];
+                        return resolution;
+                    })
+                    .ToArray();
 
-            // If the lifecycle is singleton set the implementation
-            if (descriptor.Lifetime == ELifecycleType.SINGLETON)
-                descriptor.Implementation = implementation;
+                // Instatiate type
+                var implementation = Activator.CreateInstance(initType, parameters);
 
-            return implementation;
+                // If the lifecycle is singleton set the implementation
+                if (descriptor.Lifetime == ELifecycleType.SINGLETON)
+                    descriptor.Implementation = implementation;
+
+                implementations.Add(implementation);
+            }
+
+            // If there is only one registered implementation of the serviceType return it.
+            if (implementations.Count == 1) return implementations[0];
+
+            // Return all registered implemetations of the serviceType
+            return implementations;
         }
 
         /// <summary>
@@ -81,6 +102,6 @@ namespace IoC.Models.DependancyInjection
         /// </summary>
         /// <typeparam name="TService">Type to resolve implementation</typeparam>
         /// <returns>TService implementation</returns>
-        public TService Resolve<TService>() => (TService)Resolve(typeof(TService));
+        public dynamic Resolve<TService>() => Resolve(typeof(TService));
     }
 }
